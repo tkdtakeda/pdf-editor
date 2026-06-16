@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ラベルメーカー — テンプレPDFに上塗りしてラベル作成</title>
+  <link rel="stylesheet" href="styles/base.css" />
+  <link rel="stylesheet" href="styles/components.css" />
+  <link rel="stylesheet" href="styles/editor.css" />
+
+  <!-- 同梱ライブラリ(オフライン)。classicスクリプトとして先に読み込み、グローバルを定義 -->
+  <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/pdf-lib.min.js"></script>
+  <script src="vendor/JsBarcode.all.min.js"></script>
+  <script src="vendor/qrcode.js"></script>
+</head>
+<body>
+  <header class="appbar">
+    <div class="brand">
+      <span class="brand__mark" aria-hidden="true">🏷️</span>
+      <span class="brand__name">ラベルメーカー</span>
+    </div>
+    <nav class="stepper" id="nav" aria-label="作業ステップ"></nav>
+    <div class="appbar__actions" id="appbarActions"></div>
+  </header>
+
+  <main id="view" class="view"></main>
+
+  <!-- アプリ本体(ESモジュール) -->
+  <script type="module" src="src/main.js"></script>
+
+  <noscript>このツールはJavaScriptが必要です。</noscript>
+</body>
+</html>

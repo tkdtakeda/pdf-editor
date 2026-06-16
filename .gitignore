@@ -1,0 +1,13 @@
+# dependencies (vendored browser builds live in /vendor and ARE committed)
+node_modules/
+.libtmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# runtime
+*.log
