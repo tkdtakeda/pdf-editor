@@ -3,14 +3,20 @@
 // 位置(セル)で取得するため、データの中身が変わっても同じ位置から値を取れる(=ルール不変)。
 import { el, clear, icon, toast, confirmDialog } from '../util/dom.js';
 import { Store } from '../store.js';
-import { parseClipboard, sourceOptions, cellRef, colName, DEFAULT_DELIM, COL_DELIMS, ROW_DELIMS } from '../data/parse.js';
+import { parseClipboard, sourceOptions, cellRef, colName, defaultDelim, COL_DELIMS, ROW_DELIMS } from '../data/parse.js';
 import { resolveFields } from '../data/binding.js';
 import { NORMALIZE_OPS } from '../util/normalize.js';
 import { labeledField, textInput, selectInput, segmented, pasteArea, emptyState, stepBlock, expander } from './components.js';
 
 function newBinding() {
   // parseMode='auto': A/B/C で同じ自動判定を使い、解釈のズレを防ぐ(セル指定はモード非依存)
-  return { id: null, name: '', parseMode: 'auto', sampleData: '', delim: { ...DEFAULT_DELIM }, fields: [] };
+  return { id: null, name: '', parseMode: 'auto', sampleData: '', delim: defaultDelim(), fields: [] };
+}
+/** 旧形式(col/rowが文字列)を配列形式へ移行 */
+function migrateDelim(d) {
+  if (!d) return defaultDelim();
+  const arr = (x) => (Array.isArray(x) ? x.slice() : (x ? [x] : []));
+  return { col: arr(d.col), row: arr(d.row), colCustom: d.colCustom || '', rowCustom: d.rowCustom || '', collapse: d.collapse !== false };
 }
 function makeKey(label, existingKeys) {
   let base = (label || 'field').trim().replace(/\s+/g, '_').replace(/[^\wぁ-鿿]/g, '') || 'field';
@@ -64,7 +70,7 @@ async function remove(b, app) { if (await confirmDialog(`「${b.name}」を削�
 // ---------------------------------------------------------------- エディタ
 function renderEditor(root, app) {
   const b = app.editingBinding;
-  if (!b.delim) b.delim = { ...DEFAULT_DELIM };
+  b.delim = migrateDelim(b.delim);
   let parsed = parseClipboard(b.sampleData || '', undefined, b.delim);
   let pickFieldKey = null;            // セル選択モード中の項目key
   const previewEls = new Map();       // key -> {valueEl, badgeEl}
@@ -120,22 +126,38 @@ function renderEditor(root, app) {
     el('button', { class: 'btn btn--primary btn--lg', onClick: save }, [icon('save'), 'プリセットとして保存']),
   ]));
 
-  // ---- 区切り文字UI ----
+  // ---- 区切り文字UI(複数選択の組み合わせ) ----
+  function delimChips(selected, options, onChange) {
+    return options.map((o) => {
+      const on = selected.includes(o.value);
+      const input = el('input', { type: 'checkbox', ...(on ? { checked: true } : {}), onchange: (e) => {
+        if (e.target.checked) { if (!selected.includes(o.value)) selected.push(o.value); }
+        else { const i = selected.indexOf(o.value); if (i >= 0) selected.splice(i, 1); }
+        lbl.classList.toggle('is-on', e.target.checked);
+        onChange();
+      } });
+      const lbl = el('label', { class: 'delim-chip' + (on ? ' is-on' : '') }, [input, el('span', { text: o.label })]);
+      return lbl;
+    });
+  }
   function delimiterControls() {
-    const colCustom = textInput({ value: b.delim.colCustom, placeholder: '任意の列区切り', sm: true, oninput: (v) => { b.delim.colCustom = v; onDataChanged(); } });
-    const rowCustom = textInput({ value: b.delim.rowCustom, placeholder: '任意の行区切り', sm: true, oninput: (v) => { b.delim.rowCustom = v; onDataChanged(); } });
-    const colWrap = el('div', { class: b.delim.col === 'custom' ? '' : 'hidden' }, [colCustom]);
-    const rowWrap = el('div', { class: b.delim.row === 'custom' ? '' : 'hidden' }, [rowCustom]);
-    return el('div', { class: 'row row--wrap gap-4' }, [
-      labeledField('列の区切り', el('div', { class: 'row gap-2' }, [
-        selectInput({ value: b.delim.col, sm: true, options: COL_DELIMS, onchange: (v) => { b.delim.col = v; colWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
-        colWrap,
-      ])),
-      labeledField('行の区切り', el('div', { class: 'row gap-2' }, [
-        selectInput({ value: b.delim.row, sm: true, options: ROW_DELIMS, onchange: (v) => { b.delim.row = v; rowWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
-        rowWrap,
-      ])),
+    const colCustom = textInput({ value: b.delim.colCustom, placeholder: '任意文字', sm: true, oninput: (v) => { b.delim.colCustom = v; onDataChanged(); } });
+    const rowCustom = textInput({ value: b.delim.rowCustom, placeholder: '任意文字', sm: true, oninput: (v) => { b.delim.rowCustom = v; onDataChanged(); } });
+    const colCustomWrap = el('div', { class: 'with-unit', style: { width: '120px' } }, [colCustom]);
+    const rowCustomWrap = el('div', { class: 'with-unit', style: { width: '120px' } }, [rowCustom]);
+    const syncCustom = () => { colCustomWrap.classList.toggle('hidden', !b.delim.col.includes('custom')); rowCustomWrap.classList.toggle('hidden', !b.delim.row.includes('custom')); };
+    const onColChange = () => { syncCustom(); onDataChanged(); };
+    const onRowChange = () => { syncCustom(); onDataChanged(); };
+    const ctrl = el('div', { class: 'col gap-3' }, [
+      labeledField('列(横)の区切り — 複数選択で組み合わせ', el('div', { class: 'row row--wrap gap-2' }, [...delimChips(b.delim.col, COL_DELIMS, onColChange), colCustomWrap])),
+      labeledField('行(縦)の区切り — 複数選択で組み合わせ', el('div', { class: 'row row--wrap gap-2' }, [...delimChips(b.delim.row, ROW_DELIMS, onRowChange), rowCustomWrap])),
+      el('label', { class: 'row gap-2 small', style: { cursor: 'pointer' } }, [
+        el('input', { type: 'checkbox', ...(b.delim.collapse !== false ? { checked: true } : {}), onchange: (e) => { b.delim.collapse = e.target.checked; onDataChanged(); } }),
+        el('span', { text: '連続する区切りを1つにまとめる（空セルを作らない）' }),
+      ]),
     ]);
+    syncCustom();
+    return ctrl;
   }
 
   // ---- データ更新 ----

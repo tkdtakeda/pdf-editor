@@ -366,6 +366,11 @@ table.grid .rownum { background: var(--surface-2); color: var(--muted); text-ali
 .preview-value { font-family: ui-monospace, Menlo, monospace; font-size: var(--fs-sm); background: #fff; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 9px; min-height: 32px; word-break: break-all; flex: 1 1 auto; }
 .field-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); }
 
+/* 区切り文字の複数選択チップ */
+.delim-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); cursor: pointer; font-size: var(--fs-sm); font-weight: 600; background: #fff; user-select: none; }
+.delim-chip input { margin: 0; accent-color: var(--accent); }
+.delim-chip.is-on { background: var(--accent-50); border-color: color-mix(in srgb, var(--accent) 35%, white); color: var(--accent-600); }
+
 /* セル選択モードのバナー */
 .pick-banner { display: flex; align-items: center; gap: var(--sp-2); padding: 9px 13px; border-radius: var(--r); background: var(--bind-50); color: var(--bind); border: 1px solid color-mix(in srgb, var(--bind) 30%, white); font-size: var(--fs-sm); }
 .pick-banner .btn { margin-left: auto; }
@@ -3335,6 +3340,8 @@ const Store = {
 // ユーザーが表(Excelライク)上でセルを選んで項目に紐づけられるようにする。
 // 区切り文字(列/行)は変更可能(タブ/カンマ/セミコロン/コロン/空白/任意)。
 
+// 区切り文字は「複数条件の組み合わせ」に対応(例: 改行 と 空白 を両方区切りにする)。
+// col/row はそれぞれ選択トークンの配列。collapse=true なら連続する区切りを1つにまとめる(空セルを作らない)。
 const COL_DELIMS = [
   { value: 'tab', label: 'タブ' },
   { value: 'comma', label: 'カンマ ,' },
@@ -3347,42 +3354,46 @@ const ROW_DELIMS = [
   { value: 'newline', label: '改行(Enter)' },
   { value: 'semicolon', label: 'セミコロン ;' },
   { value: 'comma', label: 'カンマ ,' },
+  { value: 'space', label: '空白' },
   { value: 'custom', label: '任意…' },
 ];
 
-const DEFAULT_DELIM = { col: 'tab', row: 'newline', colCustom: '', rowCustom: '' };
-
-function rowSplitter(delim) {
-  switch (delim?.row) {
-    case 'semicolon': return (t) => t.split(';');
-    case 'comma': return (t) => t.split(',');
-    case 'custom': return (t) => (delim.rowCustom ? t.split(delim.rowCustom) : [t]);
-    case 'newline':
-    default: return (t) => t.split(/\r\n?|\n/);
-  }
+/** 既定: 列=タブ, 行=改行, 連続はまとめる */
+function defaultDelim() {
+  return { col: ['tab'], row: ['newline'], colCustom: '', rowCustom: '', collapse: true };
 }
-function colSplitter(delim) {
-  switch (delim?.col) {
-    case 'comma': return (line) => line.split(',');
-    case 'semicolon': return (line) => line.split(';');
-    case 'colon': return (line) => line.split(':');
-    case 'space': return (line) => line.split(/[ \t　]+/);
-    case 'custom': return (line) => (delim.colCustom ? line.split(delim.colCustom) : [line]);
-    case 'tab':
-    default: return (line) => line.split('\t');
+const DEFAULT_DELIM = defaultDelim();
+
+const FRAG = { tab: '\\t', comma: ',', semicolon: ';', colon: ':', space: '[ \\t\\u3000]', newline: '\\r\\n|\\r|\\n' };
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const toArr = (x) => (Array.isArray(x) ? x : (x ? [x] : []));
+
+/** 選択トークン(+任意文字)から分割用の正規表現を作る。何も無ければ null(分割しない)。 */
+function buildSplitter(tokensRaw, custom, collapse) {
+  const frags = [];
+  for (const t of toArr(tokensRaw)) {
+    if (t === 'custom') { if (custom) frags.push(escapeRe(custom)); }
+    else if (FRAG[t]) frags.push(FRAG[t]);
   }
+  if (!frags.length) return null;
+  return new RegExp('(?:' + frags.join('|') + ')' + (collapse ? '+' : ''));
 }
 
-/** テキスト → 2次元グリッド(行×セル) */
+const isEmptyRow = (cells) => cells.every((c) => (c ?? '').trim() === '');
+
+/** テキスト → 2次元グリッド(行×セル)。複数区切りの組み合わせに対応。 */
 function toGrid(text, delim) {
   const raw = String(text || '');
   if (raw.trim() === '') return [];
-  const splitRows = rowSplitter(delim);
-  const splitCols = colSplitter(delim);
-  let rows = splitRows(raw);
-  // 末尾の空行を除去
-  while (rows.length && rows[rows.length - 1].trim() === '') rows.pop();
-  return rows.map((line) => splitCols(line));
+  const collapse = delim?.collapse !== false;
+  const rowRe = buildSplitter(delim?.row, delim?.rowCustom, collapse);
+  const colRe = buildSplitter(delim?.col, delim?.colCustom, collapse);
+  const rows = rowRe ? raw.split(rowRe) : [raw];
+  let grid = rows.map((line) => (colRe ? line.split(colRe) : [line]));
+  // 前後の空行を除去(中身の空行はcollapseで生じない)
+  while (grid.length && isEmptyRow(grid[0])) grid.shift();
+  while (grid.length && isEmptyRow(grid[grid.length - 1])) grid.pop();
+  return grid;
 }
 
 /** 列名 0→A, 1→B, ... 25→Z, 26→AA */
@@ -4627,7 +4638,13 @@ function toggleBtn(label, active, onClick, style) {
 
 function newBinding() {
   // parseMode='auto': A/B/C で同じ自動判定を使い、解釈のズレを防ぐ(セル指定はモード非依存)
-  return { id: null, name: '', parseMode: 'auto', sampleData: '', delim: { ...DEFAULT_DELIM }, fields: [] };
+  return { id: null, name: '', parseMode: 'auto', sampleData: '', delim: defaultDelim(), fields: [] };
+}
+/** 旧形式(col/rowが文字列)を配列形式へ移行 */
+function migrateDelim(d) {
+  if (!d) return defaultDelim();
+  const arr = (x) => (Array.isArray(x) ? x.slice() : (x ? [x] : []));
+  return { col: arr(d.col), row: arr(d.row), colCustom: d.colCustom || '', rowCustom: d.rowCustom || '', collapse: d.collapse !== false };
 }
 function makeKey(label, existingKeys) {
   let base = (label || 'field').trim().replace(/\s+/g, '_').replace(/[^\wぁ-鿿]/g, '') || 'field';
@@ -4681,7 +4698,7 @@ async function remove(b, app) { if (await confirmDialog(`「${b.name}」を削�
 // ---------------------------------------------------------------- エディタ
 function renderEditor(root, app) {
   const b = app.editingBinding;
-  if (!b.delim) b.delim = { ...DEFAULT_DELIM };
+  b.delim = migrateDelim(b.delim);
   let parsed = parseClipboard(b.sampleData || '', undefined, b.delim);
   let pickFieldKey = null;            // セル選択モード中の項目key
   const previewEls = new Map();       // key -> {valueEl, badgeEl}
@@ -4737,22 +4754,38 @@ function renderEditor(root, app) {
     el('button', { class: 'btn btn--primary btn--lg', onClick: save }, [icon('save'), 'プリセットとして保存']),
   ]));
 
-  // ---- 区切り文字UI ----
+  // ---- 区切り文字UI(複数選択の組み合わせ) ----
+  function delimChips(selected, options, onChange) {
+    return options.map((o) => {
+      const on = selected.includes(o.value);
+      const input = el('input', { type: 'checkbox', ...(on ? { checked: true } : {}), onchange: (e) => {
+        if (e.target.checked) { if (!selected.includes(o.value)) selected.push(o.value); }
+        else { const i = selected.indexOf(o.value); if (i >= 0) selected.splice(i, 1); }
+        lbl.classList.toggle('is-on', e.target.checked);
+        onChange();
+      } });
+      const lbl = el('label', { class: 'delim-chip' + (on ? ' is-on' : '') }, [input, el('span', { text: o.label })]);
+      return lbl;
+    });
+  }
   function delimiterControls() {
-    const colCustom = textInput({ value: b.delim.colCustom, placeholder: '任意の列区切り', sm: true, oninput: (v) => { b.delim.colCustom = v; onDataChanged(); } });
-    const rowCustom = textInput({ value: b.delim.rowCustom, placeholder: '任意の行区切り', sm: true, oninput: (v) => { b.delim.rowCustom = v; onDataChanged(); } });
-    const colWrap = el('div', { class: b.delim.col === 'custom' ? '' : 'hidden' }, [colCustom]);
-    const rowWrap = el('div', { class: b.delim.row === 'custom' ? '' : 'hidden' }, [rowCustom]);
-    return el('div', { class: 'row row--wrap gap-4' }, [
-      labeledField('列の区切り', el('div', { class: 'row gap-2' }, [
-        selectInput({ value: b.delim.col, sm: true, options: COL_DELIMS, onchange: (v) => { b.delim.col = v; colWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
-        colWrap,
-      ])),
-      labeledField('行の区切り', el('div', { class: 'row gap-2' }, [
-        selectInput({ value: b.delim.row, sm: true, options: ROW_DELIMS, onchange: (v) => { b.delim.row = v; rowWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
-        rowWrap,
-      ])),
+    const colCustom = textInput({ value: b.delim.colCustom, placeholder: '任意文字', sm: true, oninput: (v) => { b.delim.colCustom = v; onDataChanged(); } });
+    const rowCustom = textInput({ value: b.delim.rowCustom, placeholder: '任意文字', sm: true, oninput: (v) => { b.delim.rowCustom = v; onDataChanged(); } });
+    const colCustomWrap = el('div', { class: 'with-unit', style: { width: '120px' } }, [colCustom]);
+    const rowCustomWrap = el('div', { class: 'with-unit', style: { width: '120px' } }, [rowCustom]);
+    const syncCustom = () => { colCustomWrap.classList.toggle('hidden', !b.delim.col.includes('custom')); rowCustomWrap.classList.toggle('hidden', !b.delim.row.includes('custom')); };
+    const onColChange = () => { syncCustom(); onDataChanged(); };
+    const onRowChange = () => { syncCustom(); onDataChanged(); };
+    const ctrl = el('div', { class: 'col gap-3' }, [
+      labeledField('列(横)の区切り — 複数選択で組み合わせ', el('div', { class: 'row row--wrap gap-2' }, [...delimChips(b.delim.col, COL_DELIMS, onColChange), colCustomWrap])),
+      labeledField('行(縦)の区切り — 複数選択で組み合わせ', el('div', { class: 'row row--wrap gap-2' }, [...delimChips(b.delim.row, ROW_DELIMS, onRowChange), rowCustomWrap])),
+      el('label', { class: 'row gap-2 small', style: { cursor: 'pointer' } }, [
+        el('input', { type: 'checkbox', ...(b.delim.collapse !== false ? { checked: true } : {}), onchange: (e) => { b.delim.collapse = e.target.checked; onDataChanged(); } }),
+        el('span', { text: '連続する区切りを1つにまとめる（空セルを作らない）' }),
+      ]),
     ]);
+    syncCustom();
+    return ctrl;
   }
 
   // ---- データ更新 ----
@@ -5536,7 +5569,7 @@ function renderHelp(root, app) {
   ]));
 
   c.appendChild(card('3ステップの流れ', [
-    flow('A', 'データ紐づけ', '社内データをコピー&貼り付け。Excelライクな表で各項目に対応するセルをクリックして紐づけます(列/行の区切り文字も変更可)。位置で取得するので、不定形の配置でも、中身が変わっても同じルールで使えます。'),
+    flow('A', 'データ紐づけ', '社内データをコピー&貼り付け。Excelライクな表で各項目に対応するセルをクリックして紐づけます(列/行の区切りは改行・空白など複数を組み合わせ可)。位置で取得するので、不定形の配置でも、中身が変わっても同じルールで使えます。'),
     flow('B', 'ラベル設計', 'テンプレPDFを読み込み、項目をドラッグで絶対座標(mm)に配置。文字・図形・Code128・QR、計算や桁丸め(四捨五入/切り捨て/切り上げ/銀行丸め)を設定し、出力形式(PNG/PDF)を選んで名前を付けて保存します。'),
     flow('C', 'ラベル作成', '使うラベルを選び、データを貼り付けるだけ。項目名に応じて値が自動で上書きされ、ボタン1つで出力します。日常作業はこの画面で完結します。'),
   ]));

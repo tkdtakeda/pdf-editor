@@ -3,6 +3,8 @@
 // ユーザーが表(Excelライク)上でセルを選んで項目に紐づけられるようにする。
 // 区切り文字(列/行)は変更可能(タブ/カンマ/セミコロン/コロン/空白/任意)。
 
+// 区切り文字は「複数条件の組み合わせ」に対応(例: 改行 と 空白 を両方区切りにする)。
+// col/row はそれぞれ選択トークンの配列。collapse=true なら連続する区切りを1つにまとめる(空セルを作らない)。
 export const COL_DELIMS = [
   { value: 'tab', label: 'タブ' },
   { value: 'comma', label: 'カンマ ,' },
@@ -15,42 +17,46 @@ export const ROW_DELIMS = [
   { value: 'newline', label: '改行(Enter)' },
   { value: 'semicolon', label: 'セミコロン ;' },
   { value: 'comma', label: 'カンマ ,' },
+  { value: 'space', label: '空白' },
   { value: 'custom', label: '任意…' },
 ];
 
-export const DEFAULT_DELIM = { col: 'tab', row: 'newline', colCustom: '', rowCustom: '' };
-
-function rowSplitter(delim) {
-  switch (delim?.row) {
-    case 'semicolon': return (t) => t.split(';');
-    case 'comma': return (t) => t.split(',');
-    case 'custom': return (t) => (delim.rowCustom ? t.split(delim.rowCustom) : [t]);
-    case 'newline':
-    default: return (t) => t.split(/\r\n?|\n/);
-  }
+/** 既定: 列=タブ, 行=改行, 連続はまとめる */
+export function defaultDelim() {
+  return { col: ['tab'], row: ['newline'], colCustom: '', rowCustom: '', collapse: true };
 }
-function colSplitter(delim) {
-  switch (delim?.col) {
-    case 'comma': return (line) => line.split(',');
-    case 'semicolon': return (line) => line.split(';');
-    case 'colon': return (line) => line.split(':');
-    case 'space': return (line) => line.split(/[ \t　]+/);
-    case 'custom': return (line) => (delim.colCustom ? line.split(delim.colCustom) : [line]);
-    case 'tab':
-    default: return (line) => line.split('\t');
+export const DEFAULT_DELIM = defaultDelim();
+
+const FRAG = { tab: '\\t', comma: ',', semicolon: ';', colon: ':', space: '[ \\t\\u3000]', newline: '\\r\\n|\\r|\\n' };
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const toArr = (x) => (Array.isArray(x) ? x : (x ? [x] : []));
+
+/** 選択トークン(+任意文字)から分割用の正規表現を作る。何も無ければ null(分割しない)。 */
+function buildSplitter(tokensRaw, custom, collapse) {
+  const frags = [];
+  for (const t of toArr(tokensRaw)) {
+    if (t === 'custom') { if (custom) frags.push(escapeRe(custom)); }
+    else if (FRAG[t]) frags.push(FRAG[t]);
   }
+  if (!frags.length) return null;
+  return new RegExp('(?:' + frags.join('|') + ')' + (collapse ? '+' : ''));
 }
 
-/** テキスト → 2次元グリッド(行×セル) */
+const isEmptyRow = (cells) => cells.every((c) => (c ?? '').trim() === '');
+
+/** テキスト → 2次元グリッド(行×セル)。複数区切りの組み合わせに対応。 */
 function toGrid(text, delim) {
   const raw = String(text || '');
   if (raw.trim() === '') return [];
-  const splitRows = rowSplitter(delim);
-  const splitCols = colSplitter(delim);
-  let rows = splitRows(raw);
-  // 末尾の空行を除去
-  while (rows.length && rows[rows.length - 1].trim() === '') rows.pop();
-  return rows.map((line) => splitCols(line));
+  const collapse = delim?.collapse !== false;
+  const rowRe = buildSplitter(delim?.row, delim?.rowCustom, collapse);
+  const colRe = buildSplitter(delim?.col, delim?.colCustom, collapse);
+  const rows = rowRe ? raw.split(rowRe) : [raw];
+  let grid = rows.map((line) => (colRe ? line.split(colRe) : [line]));
+  // 前後の空行を除去(中身の空行はcollapseで生じない)
+  while (grid.length && isEmptyRow(grid[0])) grid.shift();
+  while (grid.length && isEmptyRow(grid[grid.length - 1])) grid.pop();
+  return grid;
 }
 
 /** 列名 0→A, 1→B, ... 25→Z, 26→AA */
