@@ -22,7 +22,7 @@ export function getPreviewValues(binding) {
   if (!binding) return values;
   let resolved = {};
   if (binding.sampleData) {
-    try { resolved = resolveFields(binding, parseClipboard(binding.sampleData, binding.parseMode === 'auto' ? undefined : binding.parseMode), 0).values; } catch { /* noop */ }
+    try { resolved = resolveFields(binding, parseClipboard(binding.sampleData, binding.parseMode === 'auto' ? undefined : binding.parseMode, binding.delim), 0).values; } catch { /* noop */ }
   }
   for (const f of binding.fields) {
     const v = resolved[f.key];

@@ -93,11 +93,24 @@
 .kv-row .kv-v { font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kv-row .kv-v.is-empty { color: var(--danger); }
 
-/* 紐づけ表(A) */
-.bind-table { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
-.bind-table td { vertical-align: top; padding-right: var(--sp-3); }
-.bind-row { background: var(--surface-2); }
-.preview-value { font-family: ui-monospace, Menlo, monospace; font-size: var(--fs-sm); background: #fff; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 9px; min-height: 32px; word-break: break-all; }
+/* 紐づけ(A) */
+.preview-value { font-family: ui-monospace, Menlo, monospace; font-size: var(--fs-sm); background: #fff; border: 1px solid var(--line); border-radius: var(--r-sm); padding: 6px 9px; min-height: 32px; word-break: break-all; flex: 1 1 auto; }
+.field-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); }
+
+/* セル選択モードのバナー */
+.pick-banner { display: flex; align-items: center; gap: var(--sp-2); padding: 9px 13px; border-radius: var(--r); background: var(--bind-50); color: var(--bind); border: 1px solid color-mix(in srgb, var(--bind) 30%, white); font-size: var(--fs-sm); }
+.pick-banner .btn { margin-left: auto; }
+
+/* Excelライクな選択表 */
+table.grid--pick { table-layout: fixed; }
+table.grid--pick th, table.grid--pick td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+table.grid--pick .corner { width: 36px; }
+table.grid--pick td.cell { cursor: default; position: relative; vertical-align: top; }
+.tablewrap.is-picking td.cell { cursor: pointer; }
+.tablewrap.is-picking td.cell:hover { outline: 2px solid var(--bind); outline-offset: -2px; background: var(--bind-50); }
+td.cell.is-bound { background: color-mix(in srgb, var(--bind) 12%, white); }
+td.cell .cell__v { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+td.cell .cell__tag { display: inline-block; margin-top: 3px; font-size: 10px; font-weight: 800; color: #fff; background: var(--bind); border-radius: var(--r-pill); padding: 1px 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1100px) {
   .designer { grid-template-columns: 200px 1fr 280px; }

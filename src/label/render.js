@@ -7,9 +7,13 @@ import { mmToPx, ptToPx, ptToMm, clamp } from '../util/units.js';
 import { resolveElementText } from './model.js';
 import { renderBarcode, renderQRCode } from './codes.js';
 
-// pdf.js worker 設定(同梱ファイルを指す)
+// pdf.js worker 設定。
+//  - 通常(サーバ配信/ESモジュール): 同梱ファイルを import.meta.url 基準で解決。
+//  - 単一HTML配布(file://): ビルド時に window.__PDF_WORKER_URL__ (Blob URL) を注入して上書き。
 if (window.pdfjsLib) {
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../../vendor/pdf.worker.min.js', import.meta.url).href;
+  const overrideWorker = window.__PDF_WORKER_URL__;
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = overrideWorker
+    || new URL('../../vendor/pdf.worker.min.js', import.meta.url).href;
 }
 
 // ---- base64 / バイト変換 ----------------------------------------------------

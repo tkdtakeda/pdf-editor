@@ -10,16 +10,21 @@
 
 ## 使い方（起動）
 
-ローカルで簡易HTTPサーバを立てて開くのが確実です（pdf.js のワーカー読み込みのため `file://` 直開きは推奨しません）。
+### 配布・利用は「単一HTML」をダブルクリック（推奨）
+
+`dist/label-maker.html` の**1ファイルだけ**で動きます（ライブラリ・CSS・pdf.jsワーカーをすべて内包）。
+**ダブルクリックして既定のブラウザで開く**だけ。サーバ起動もインターネット接続も不要です。
+配布はこのHTMLをメール添付や共有フォルダに置くだけで済みます。
+
+> このファイルは `npm run build` で `src/` から生成します。ソースを変更したら作り直してください。
+
+### 開発時（ソースを直接動かす）
+
+開発中は簡易サーバ経由で動かします（ESモジュールは `file://` 直開きでは読めないため）。
 
 ```bash
-# いずれか
-python3 -m http.server 8080      # → http://localhost:8080/
-#   または
-npm start                        # 上と同じ（package.json のスクリプト）
+python3 -m http.server 8080   # または npm start  →  http://localhost:8080/
 ```
-
-ブラウザで `http://localhost:8080/` を開きます。インターネット接続は不要です。
 
 ---
 
@@ -28,11 +33,13 @@ npm start                        # 上と同じ（package.json のスクリプ�
 あなたが想定した手順をそのまま画面（ステッパー）にしています。
 
 ### A. データ紐づけ
-社内Webの表を **Ctrl+A → Ctrl+C** でコピーし、フォームに **Ctrl+V** で貼り付け。
-- 貼り付けデータをグリッド解析（タブ区切りを自動認識。表 / 項目:値 / セル をモード切替可）
-- 各データに**項目名**を付けて紐づけ（ヘッダ名・項目名・セル位置のいずれかで取得）
+社内データを **Ctrl+C** でコピーし、フォームに **Ctrl+V** で貼り付け。
+- 貼り付けデータを**Excelライクな表**として表示し、各項目に対応する**セルをクリックして紐づけ**
+  （位置で取得するので、上は「1行目が項目名・3行目が値」、下は「1列目が項目・2列目が値」のような
+  **不定形の配置**でも、それぞれのセルを指定すればOK）
+- **区切り文字を変更可能**（列・行それぞれ：タブ / カンマ / セミコロン / コロン / 空白 / 任意文字）
 - **正規化**（前後空白除去・全角→半角・カンマ除去・数字のみ抽出・置換 など）を項目ごとに設定
-- **プリセットとして保存**。データの中身が変わってもルール（項目名）は不変で再利用できます。
+- **プリセットとして保存**。データの中身が変わっても、同じ位置から値を取るのでルールは不変です。
 
 ### B. ラベル設計（ひな形作成）
 - テンプレPDFを読み込み（無ければ白紙サイズ指定。A4/A6/はがき/名刺などの定型あり）
@@ -61,16 +68,18 @@ npm start                        # 上と同じ（package.json のスクリプ�
 ## プロジェクト構成
 
 ```
-index.html              エントリ（vendorをグローバル読込→ src/main.js）
+dist/label-maker.html   配布用の単一HTML（npm run build で生成・ダブルクリックで動く）
+index.html              開発用エントリ（vendorをグローバル読込→ src/main.js）
 styles/                 base / components / editor の3つのCSS
 vendor/                 同梱ライブラリ（オフライン用・改変なし）
 src/
   main.js               画面遷移・ナビ・共有状態
   store.js              localStorage 永続化 / JSON入出力
   util/                 dom, units, format(丸め), expr(式), normalize
-  data/                 parse(貼り付け解析), binding(紐づけ解決)
+  data/                 parse(貼り付け解析・区切り・セル参照), binding(紐づけ解決)
   label/                model, render(中核描画), codes(barcode/QR), export(PNG/PDF)
   ui/                   stepA / stepB / editorCanvas / inspector / stepC / presets / help
+scripts/build.mjs       単一HTMLビルド（ESモジュール結合＋ワーカー内包）
 scripts/vendor.mjs      vendor再生成（メンテナ向け）
 ```
 
@@ -110,9 +119,11 @@ scripts/vendor.mjs      vendor再生成（メンテナ向け）
 - 要素の**回転**はインスペクタの数値入力で指定します（キャンバスの回転ハンドルは未提供）。
 - 回転メタデータ（/Rotate）付きのテンプレページは未対応（多くのラベルテンプレは無回転）。
 
-## 開発（vendor再生成）
+## 開発・ビルド
 
 ```bash
-npm install        # devDependencies を取得
-npm run vendor     # node_modules から vendor/ を再コピー
+npm start          # 開発サーバ → http://localhost:8080/
+npm run build      # dist/label-maker.html（配布用の単一HTML）を生成
+npm install        # （メンテナ）devDependencies を取得
+npm run vendor     # （メンテナ）node_modules から vendor/ を再コピー
 ```

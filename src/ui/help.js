@@ -9,7 +9,7 @@ export function renderHelp(root, app) {
   ]));
 
   c.appendChild(card('3ステップの流れ', [
-    flow('A', 'データ紐づけ', '社内Webの表をコピー&貼り付け。各列・各項目に「項目名」を付けて紐づけ、正規化ルールごと保存します。中身が変わっても項目名は不変なので、毎回同じルールで使えます。'),
+    flow('A', 'データ紐づけ', '社内データをコピー&貼り付け。Excelライクな表で各項目に対応するセルをクリックして紐づけます(列/行の区切り文字も変更可)。位置で取得するので、不定形の配置でも、中身が変わっても同じルールで使えます。'),
     flow('B', 'ラベル設計', 'テンプレPDFを読み込み、項目をドラッグで絶対座標(mm)に配置。文字・図形・Code128・QR、計算や桁丸め(四捨五入/切り捨て/切り上げ/銀行丸め)を設定し、出力形式(PNG/PDF)を選んで名前を付けて保存します。'),
     flow('C', 'ラベル作成', '使うラベルを選び、データを貼り付けるだけ。項目名に応じて値が自動で上書きされ、ボタン1つで出力します。日常作業はこの画面で完結します。'),
   ]));
@@ -24,8 +24,8 @@ export function renderHelp(root, app) {
   c.appendChild(card('プライバシーと動作環境', [
     el('ul', { class: 'small', style: { margin: 0, paddingLeft: '18px', lineHeight: '1.9' } }, [
       el('li', { html: '<b>外部送信なし</b>: 貼り付けたデータ・テンプレPDF・プリセットはすべてこのブラウザ内(localStorage)にのみ保存されます。' }),
-      el('li', { html: '<b>オフライン動作</b>: 必要なライブラリはすべて同梱(vendor/)。インターネット接続は不要です。' }),
-      el('li', { html: '<b>起動方法</b>: フォルダ内で簡易サーバを起動して開くのが確実です。例) <code class="mono">python3 -m http.server 8080</code> を実行し、ブラウザで <code class="mono">http://localhost:8080/</code> を開く(同梱の <code class="mono">npm start</code> でも可)。' }),
+      el('li', { html: '<b>オフライン動作</b>: 必要なライブラリはすべて同梱。インターネット接続は不要です。' }),
+      el('li', { html: '<b>配布・起動</b>: 配布用の単一ファイル <code class="mono">dist/label-maker.html</code> を<b>ダブルクリック</b>するだけで開けます(サーバ不要)。開発時は <code class="mono">npm start</code> で簡易サーバ経由。' }),
       el('li', { html: '<b>バックアップ</b>: 「管理」からJSONでエクスポートでき、他PCへ配布・復元できます。' }),
     ]),
   ]));

@@ -58,7 +58,7 @@ function previewPlaceholders(lb) {
 function renderRun(root, app, label) {
   const binding = label.bindingPresetId ? Store.bindings.get(label.bindingPresetId) : null;
   let pasteText = '';
-  let parsed = parseClipboard('', binding && binding.parseMode !== 'auto' ? binding.parseMode : undefined);
+  let parsed = parseClipboard('', binding && binding.parseMode !== 'auto' ? binding.parseMode : undefined, binding && binding.delim);
   let recordIndex = 0;
   let fmt = label.output.format;
   let dpi = label.output.dpi;
@@ -103,7 +103,7 @@ function renderRun(root, app, label) {
     outActions,
   ]));
 
-  function reparse() { parsed = parseClipboard(pasteText, binding && binding.parseMode !== 'auto' ? binding.parseMode : (binding ? undefined : 'matrix')); if (recordIndex >= parsed.recordCount) recordIndex = 0; }
+  function reparse() { parsed = parseClipboard(pasteText, binding && binding.parseMode !== 'auto' ? binding.parseMode : (binding ? undefined : 'matrix'), binding && binding.delim); if (recordIndex >= parsed.recordCount) recordIndex = 0; }
 
   function currentValues() { return binding ? resolveFields(binding, parsed, recordIndex).values : {}; }
 

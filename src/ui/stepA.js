@@ -1,17 +1,17 @@
 // ワークフローA: データ紐づけ
-//  ①貼り付け → ②項目名に紐づけ(+正規化) → ③プリセット保存
-// ルール(項目名・取得元・正規化)はデータの中身に依存せず保存され、再利用できる。
-import { el, clear, icon, toast, confirmDialog, uid } from '../util/dom.js';
+//  ①貼り付け(区切り変更可) → ②Excelライクな表でセルを選んで項目に紐づけ(+正規化) → ③保存
+// 位置(セル)で取得するため、データの中身が変わっても同じ位置から値を取れる(=ルール不変)。
+import { el, clear, icon, toast, confirmDialog } from '../util/dom.js';
 import { Store } from '../store.js';
-import { parseClipboard, sourceOptions, sourceToValue, valueToSource } from '../data/parse.js';
+import { parseClipboard, sourceOptions, cellRef, colName, DEFAULT_DELIM, COL_DELIMS, ROW_DELIMS } from '../data/parse.js';
 import { resolveFields } from '../data/binding.js';
 import { NORMALIZE_OPS } from '../util/normalize.js';
 import { labeledField, textInput, selectInput, segmented, pasteArea, emptyState, stepBlock, expander } from './components.js';
 
 function newBinding() {
-  return { id: null, name: '', parseMode: 'auto', sampleData: '', fields: [] };
+  // parseMode='auto': A/B/C で同じ自動判定を使い、解釈のズレを防ぐ(セル指定はモード非依存)
+  return { id: null, name: '', parseMode: 'auto', sampleData: '', delim: { ...DEFAULT_DELIM }, fields: [] };
 }
-
 function makeKey(label, existingKeys) {
   let base = (label || 'field').trim().replace(/\s+/g, '_').replace(/[^\wぁ-鿿]/g, '') || 'field';
   let k = base, i = 2;
@@ -30,217 +30,234 @@ function renderList(root, app) {
   const c = el('div', { class: 'container' });
   c.appendChild(el('div', { class: 'page-head' }, [
     el('h1', { text: 'A. データ紐づけ' }),
-    el('p', { text: '社内Webの表をコピー&貼り付けし、各項目に「項目名」を付けて紐づけます。中身が変わってもルール(項目名)は同じまま再利用できます。' }),
+    el('p', { text: '社内データをコピー&貼り付けし、表のセルを選んで項目名に紐づけます。位置で取得するので、中身が変わっても同じルールで使えます。' }),
   ]));
   c.appendChild(el('div', { class: 'row row--between mb-4' }, [
     el('div', { class: 'muted small', text: `保存済み: ${list.length}件` }),
     el('button', { class: 'btn btn--primary', onClick: () => app.openBindingEditor(newBinding()) }, [icon('plus'), '新規作成']),
   ]));
-
   if (!list.length) {
     c.appendChild(el('div', { class: 'card' }, [emptyState({
       icon: '🔗', title: 'まずはデータ紐づけルールを作りましょう',
-      desc: '社内Webの表をコピーして貼り付け、項目名を付けるだけ。ここで作ったルールが B(設計) と C(作成) の土台になります。',
+      desc: 'データを貼り付け、表のセルをクリックして項目名に割り当てるだけ。ここで作ったルールが B(設計) と C(作成) の土台になります。',
       action: el('button', { class: 'btn btn--primary btn--lg', onClick: () => app.openBindingEditor(newBinding()) }, [icon('plus'), '最初のルールを作る']),
     })]));
   } else {
     const grid = el('div', { class: 'preset-grid' });
-    for (const b of list) {
-      grid.appendChild(el('div', { class: 'preset-card' }, [
-        el('div', { class: 'preset-card__name', text: b.name || '(無題)' }),
-        el('div', { class: 'preset-card__meta', text: `項目 ${b.fields.length} / 更新 ${new Date(b.updatedAt).toLocaleString('ja-JP')}` }),
-        el('div', { class: 'field-chips' }, b.fields.slice(0, 8).map((f) => el('span', { class: 'chip chip--ghost', text: f.label }))),
-        el('div', { class: 'row row--end gap-2 mt-2' }, [
-          el('button', { class: 'btn btn--ghost btn--sm', onClick: () => duplicate(b, app) }, [icon('copy', 16), '複製']),
-          el('button', { class: 'btn btn--danger btn--sm', onClick: () => remove(b, app) }, [icon('trash', 16)]),
-          el('button', { class: 'btn btn--secondary btn--sm', onClick: () => app.openBindingEditor(structuredClone(b)) }, '編集'),
-        ]),
-      ]));
-    }
+    for (const b of list) grid.appendChild(el('div', { class: 'preset-card' }, [
+      el('div', { class: 'preset-card__name', text: b.name || '(無題)' }),
+      el('div', { class: 'preset-card__meta', text: `項目 ${b.fields.length} / 更新 ${new Date(b.updatedAt).toLocaleString('ja-JP')}` }),
+      el('div', { class: 'field-chips' }, b.fields.slice(0, 8).map((f) => el('span', { class: 'chip chip--ghost', text: f.label }))),
+      el('div', { class: 'row row--end gap-2 mt-2' }, [
+        el('button', { class: 'btn btn--ghost btn--sm', onClick: () => duplicate(b, app) }, [icon('copy', 16), '複製']),
+        el('button', { class: 'btn btn--danger btn--sm', onClick: () => remove(b, app) }, [icon('trash', 16)]),
+        el('button', { class: 'btn btn--secondary btn--sm', onClick: () => app.openBindingEditor(structuredClone(b)) }, '編集'),
+      ]),
+    ]));
     c.appendChild(grid);
   }
   root.appendChild(c);
 }
-
-function duplicate(b, app) {
-  const copy = structuredClone(b); copy.id = null; copy.name = b.name + ' のコピー';
-  Store.bindings.upsert(copy); toast('複製しました', 'success'); app.render();
-}
-async function remove(b, app) {
-  if (await confirmDialog(`「${b.name}」を削除します。よろしいですか？`, { okLabel: '削除' })) {
-    Store.bindings.remove(b.id); toast('削除しました'); app.render();
-  }
-}
+function duplicate(b, app) { const copy = structuredClone(b); copy.id = null; copy.name = b.name + ' のコピー'; Store.bindings.upsert(copy); toast('複製しました', 'success'); app.render(); }
+async function remove(b, app) { if (await confirmDialog(`「${b.name}」を削除します。よろしいですか？`, { okLabel: '削除' })) { Store.bindings.remove(b.id); toast('削除しました'); app.render(); } }
 
 // ---------------------------------------------------------------- エディタ
 function renderEditor(root, app) {
   const b = app.editingBinding;
-  let parsed = parseClipboard(b.sampleData || '', b.parseMode === 'auto' ? undefined : b.parseMode);
-  let recordIndex = 0;
+  if (!b.delim) b.delim = { ...DEFAULT_DELIM };
+  let parsed = parseClipboard(b.sampleData || '', undefined, b.delim);
+  let pickFieldKey = null;            // セル選択モード中の項目key
+  const previewEls = new Map();       // key -> {valueEl, badgeEl}
 
-  const c = el('div', { class: 'container' });
-  const body = el('div', { class: 'col gap-5' });
+  const c = el('div', { class: 'container container--wide' });
   c.appendChild(el('div', { class: 'row row--between page-head' }, [
-    el('div', {}, [el('h1', { text: app.editingBinding.id ? 'データ紐づけを編集' : 'データ紐づけを新規作成' })]),
+    el('div', {}, [el('h1', { text: b.id ? 'データ紐づけを編集' : 'データ紐づけを新規作成' })]),
     el('button', { class: 'btn btn--ghost', onClick: () => app.closeBindingEditor() }, '← 一覧へ'),
   ]));
-  c.appendChild(body);
   root.appendChild(c);
 
-  function reparse() {
-    parsed = parseClipboard(b.sampleData || '', b.parseMode === 'auto' ? undefined : b.parseMode);
-    if (recordIndex >= parsed.recordCount) recordIndex = 0;
-  }
+  // 名前
+  c.appendChild(el('div', { class: 'card card__pad mb-4' }, [
+    labeledField('このルールの名前', textInput({ value: b.name, placeholder: '例: 出荷指示データ', oninput: (v) => { b.name = v; } }), '保存して B/C から呼び出すときの名前です。'),
+  ]));
 
-  function render() {
-    clear(body);
+  // ① 貼り付け + 区切り
+  const gridHost = el('div');
+  const ta = pasteArea({ value: b.sampleData, onData: (text) => { b.sampleData = text; onDataChanged(); } });
+  c.appendChild(el('div', { class: 'card card__pad mb-4' }, [
+    stepBlock('1', 'データを貼り付け', el('div', { class: 'col gap-3' }, [
+      el('p', { class: 'small muted', text: '社内データを Ctrl+C でコピーし、下に Ctrl+V で貼り付けます。うまく列が分かれない時は区切り文字を変更してください。' }),
+      delimiterControls(),
+      ta,
+    ])),
+  ]));
 
-    // 名前
-    body.appendChild(el('div', { class: 'card card__pad' }, [
-      labeledField('このルールの名前', textInput({ value: b.name, placeholder: '例: 出荷指示データ', oninput: (v) => { b.name = v; } }), '保存して B/C から呼び出すときの名前です。'),
-    ]));
-
-    // ① 貼り付け
-    const ta = pasteArea({ value: b.sampleData, onData: (text) => { b.sampleData = text; reparse(); renderDataPart(); } });
-    const dataPart = el('div', { class: 'col gap-4 mt-3' });
-    body.appendChild(el('div', { class: 'card card__pad' }, [
-      stepBlock('1', 'データを貼り付け', el('div', { class: 'col gap-3' }, [
-        el('p', { class: 'small muted', text: '社内Web上で Ctrl+A → Ctrl+C でコピーし、下の枠に Ctrl+V で貼り付けます。表はタブ区切りとして自動解釈されます。' }),
-        ta, dataPart,
-      ])),
-    ]));
-
-    function renderDataPart() {
-      clear(dataPart);
-      if (!parsed.rows) { dataPart.appendChild(el('div', { class: 'muted small', text: 'まだデータがありません。' })); return; }
-      // モード切替
-      dataPart.appendChild(el('div', { class: 'row row--wrap gap-4' }, [
-        labeledField('データの形', segmented({
-          value: b.parseMode,
-          options: [
-            { value: 'auto', label: `自動(${labelOfMode(parsed.mode)})` },
-            { value: 'table', label: '表' },
-            { value: 'keyvalue', label: '項目:値' },
-            { value: 'matrix', label: 'セル' },
-          ],
-          onchange: (v) => { b.parseMode = v; reparse(); renderDataPart(); render2(); },
-        })),
-        parsed.mode === 'table' && parsed.recordCount > 1
-          ? labeledField('プレビュー対象の行', selectInput({
-            value: String(recordIndex),
-            options: parsed.records.map((_, i) => ({ value: String(i), label: `${i + 1}行目` })),
-            onchange: (v) => { recordIndex = +v; render2(); },
-          }))
-          : null,
-      ]));
-      // グリッドプレビュー
-      dataPart.appendChild(gridPreview(parsed));
-    }
-    renderDataPart();
-
-    // ② 項目紐づけ
-    const fieldsHost = el('div', { class: 'col gap-3' });
-    const part2 = el('div', { class: 'card card__pad' }, [
-      stepBlock('2', '項目名を付けて紐づける', el('div', { class: 'col gap-3' }, [
-        el('div', { class: 'row row--wrap gap-2' }, [
-          el('button', { class: 'btn btn--secondary btn--sm', onClick: autofillFields }, [icon('plus', 16), 'データから項目を自動作成']),
-          el('button', { class: 'btn btn--ghost btn--sm', onClick: addField }, [icon('plus', 16), '項目を1つ追加']),
+  // ② 紐づけ(表 + 項目)
+  const fieldsHost = el('div', { class: 'col gap-2' });
+  const pickBanner = el('div', { class: 'pick-banner hidden' });
+  c.appendChild(el('div', { class: 'card card__pad' }, [
+    stepBlock('2', '表のセルを項目に紐づけ', el('div', { class: 'col gap-3' }, [
+      el('p', { class: 'small muted', text: '項目の「セルを選択」を押し、右の表で対応するセルをクリックします。位置で取得するので、毎回同じ場所から値が入ります。' }),
+      pickBanner,
+      el('div', { class: 'two-pane' }, [
+        el('div', { class: 'col gap-2' }, [
+          el('div', { class: 'row row--wrap gap-2' }, [
+            el('button', { class: 'btn btn--secondary btn--sm', onClick: autofillFields }, [icon('plus', 16), 'ヘッダ/項目から自動作成']),
+            el('button', { class: 'btn btn--ghost btn--sm', onClick: addField }, [icon('plus', 16), '項目を追加']),
+          ]),
+          fieldsHost,
         ]),
-        fieldsHost,
+        el('div', {}, [el('div', { class: 'section-title', text: '貼り付けデータ(クリックで選択)' }), gridHost]),
+      ]),
+    ])),
+  ]));
+
+  // ③ 保存
+  c.appendChild(el('div', { class: 'flow-actions' }, [
+    el('div', { class: 'muted small', text: `${b.fields.length}項目` }),
+    el('div', { class: 'spacer' }),
+    el('button', { class: 'btn btn--ghost', onClick: () => app.closeBindingEditor() }, 'キャンセル'),
+    el('button', { class: 'btn btn--primary btn--lg', onClick: save }, [icon('save'), 'プリセットとして保存']),
+  ]));
+
+  // ---- 区切り文字UI ----
+  function delimiterControls() {
+    const colCustom = textInput({ value: b.delim.colCustom, placeholder: '任意の列区切り', sm: true, oninput: (v) => { b.delim.colCustom = v; onDataChanged(); } });
+    const rowCustom = textInput({ value: b.delim.rowCustom, placeholder: '任意の行区切り', sm: true, oninput: (v) => { b.delim.rowCustom = v; onDataChanged(); } });
+    const colWrap = el('div', { class: b.delim.col === 'custom' ? '' : 'hidden' }, [colCustom]);
+    const rowWrap = el('div', { class: b.delim.row === 'custom' ? '' : 'hidden' }, [rowCustom]);
+    return el('div', { class: 'row row--wrap gap-4' }, [
+      labeledField('列の区切り', el('div', { class: 'row gap-2' }, [
+        selectInput({ value: b.delim.col, sm: true, options: COL_DELIMS, onchange: (v) => { b.delim.col = v; colWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
+        colWrap,
+      ])),
+      labeledField('行の区切り', el('div', { class: 'row gap-2' }, [
+        selectInput({ value: b.delim.row, sm: true, options: ROW_DELIMS, onchange: (v) => { b.delim.row = v; rowWrap.classList.toggle('hidden', v !== 'custom'); onDataChanged(); } }),
+        rowWrap,
       ])),
     ]);
-    body.appendChild(part2);
+  }
 
-    function render2() { renderDataPart(); renderFields(); }
+  // ---- データ更新 ----
+  function reparse() { parsed = parseClipboard(b.sampleData || '', undefined, b.delim); }
+  function onDataChanged() { reparse(); renderGrid(); renderFields(); }
 
-    function renderFields() {
-      clear(fieldsHost);
-      if (!b.fields.length) {
-        fieldsHost.appendChild(el('div', { class: 'field-empty', text: 'まだ項目がありません。「自動作成」が手早いです。' }));
-        return;
-      }
-      const opts = [{ value: '', label: '— 取得元を選択 —' }, { value: 'fixed', label: '固定値(データに依存しない)' }, ...sourceOptions(parsed)];
-      const { values, meta } = resolveFields(b, parsed, recordIndex);
-      const existingKeys = new Set(b.fields.map((f) => f.key));
-
-      for (const f of b.fields) {
-        const m = meta[f.key] || {};
-        const preview = values[f.key];
-        const sourceVal = f.source && f.source.type === 'fixed' ? 'fixed' : sourceToValue(f.source);
-        const srcSelect = selectInput({
-          value: sourceVal || '', options: opts, sm: true,
-          onchange: (v) => {
-            if (v === 'fixed') f.source = { type: 'fixed', value: f.source?.value || '' };
-            else f.source = valueToSource(v);
-            render2();
-          },
-        });
-        const fixedInput = f.source?.type === 'fixed'
-          ? textInput({ value: f.source.value || '', placeholder: '固定で入れる値', sm: true, oninput: (v) => { f.source.value = v; render2(); } })
-          : null;
-
-        const row = el('div', { class: 'card', style: { background: 'var(--surface-2)', borderRadius: 'var(--r)' } }, [
-          el('div', { class: 'card__pad', style: { padding: 'var(--sp-3) var(--sp-4)' } }, [
-            el('div', { class: 'row gap-3 row--wrap' }, [
-              el('div', { class: 'field grow', style: { minWidth: '160px' } }, [
-                el('label', { text: '項目名' }),
-                textInput({
-                  value: f.label, placeholder: '例: 品番 / 金額', sm: true,
-                  oninput: (v) => { f.label = v; }, // keyは初回生成後は固定(参照名の安定性)
-                }),
-                el('div', { class: 'hint mono', text: `式での参照名: ${f.key}` }),
-              ]),
-              el('div', { class: 'field grow', style: { minWidth: '180px' } }, [
-                el('label', { text: 'データの取得元' }), srcSelect, fixedInput,
-              ]),
-              el('div', { class: 'field', style: { minWidth: '160px', flex: '1' } }, [
-                el('label', { text: 'プレビュー(正規化後)' }),
-                el('div', { class: 'preview-value' + (preview === '' ? ' muted' : '') }, [preview === '' ? '(空)' : preview]),
-                f.source && !m.matched && f.source.type !== 'fixed'
-                  ? el('span', { class: 'badge badge--warn mt-2', text: '⚠ 取得元が見つかりません' })
-                  : (preview !== '' ? el('span', { class: 'badge badge--ok mt-2', text: '✓ OK' }) : null),
-              ]),
-              el('button', { class: 'icon-btn icon-btn--danger', title: '削除', onClick: () => { b.fields = b.fields.filter((x) => x !== f); render2(); } }, [icon('trash', 18)]),
-            ]),
-            normalizeEditor(f, () => render2()),
-          ]),
+  // ---- 表(Excelライク) ----
+  function boundCellMap() {
+    const map = new Map(); // "r:c" -> [labels]
+    for (const f of b.fields) if (f.source && f.source.type === 'cell') {
+      const k = `${f.source.r}:${f.source.c}`;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(f.label || f.key);
+    }
+    return map;
+  }
+  function renderGrid() {
+    clear(gridHost);
+    if (!parsed.rows) { gridHost.appendChild(el('div', { class: 'muted small', style: { padding: '12px' }, text: 'データがありません。' })); return; }
+    const bound = boundCellMap();
+    const wrap = el('div', { class: 'tablewrap' + (pickFieldKey ? ' is-picking' : '') });
+    const table = el('table', { class: 'grid grid--pick' });
+    // ヘッダ(列名)
+    const thead = el('thead');
+    const htr = el('tr', {}, [el('th', { class: 'rownum corner' })]);
+    for (let cIdx = 0; cIdx < parsed.cols; cIdx++) htr.appendChild(el('th', { text: colName(cIdx) }));
+    thead.appendChild(htr); table.appendChild(thead);
+    // 本体
+    const tbody = el('tbody');
+    for (let r = 0; r < parsed.grid.length; r++) {
+      const tr = el('tr', {}, [el('td', { class: 'rownum', text: String(r + 1) })]);
+      for (let cIdx = 0; cIdx < parsed.cols; cIdx++) {
+        const val = parsed.grid[r][cIdx] ?? '';
+        const k = `${r}:${cIdx}`;
+        const labels = bound.get(k);
+        const td = el('td', { class: 'cell' + (labels ? ' is-bound' : ''), dataset: { r, c: cIdx } }, [
+          el('span', { class: 'cell__v', text: val }),
+          labels ? el('span', { class: 'cell__tag', text: labels.join(', ') }) : null,
         ]);
-        fieldsHost.appendChild(row);
+        td.addEventListener('click', () => onCellClick(r, cIdx));
+        tr.appendChild(td);
       }
+      tbody.appendChild(tr);
     }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    gridHost.appendChild(wrap);
+  }
+  function onCellClick(r, c) {
+    if (!pickFieldKey) { toast('先に項目の「セルを選択」を押してください', 'warn'); return; }
+    const f = b.fields.find((x) => x.key === pickFieldKey);
+    if (f) { f.source = { type: 'cell', r, c }; }
+    setPick(null);
+    renderGrid(); renderFields();
+  }
+  function setPick(key) {
+    pickFieldKey = key;
+    if (key) {
+      const f = b.fields.find((x) => x.key === key);
+      pickBanner.className = 'pick-banner';
+      clear(pickBanner);
+      pickBanner.append(icon('arrow', 16), el('span', { html: `「<b>${f?.label || ''}</b>」に割り当てるセルを表でクリック` }), el('button', { class: 'btn btn--ghost btn--sm', onClick: () => { setPick(null); renderGrid(); renderFields(); } }, 'キャンセル(Esc)'));
+    } else { pickBanner.className = 'pick-banner hidden'; }
+  }
 
-    function addField() {
-      const keys = new Set(b.fields.map((f) => f.key));
-      const label = `項目${b.fields.length + 1}`;
-      b.fields.push({ key: makeKey(label, keys), label, source: null, normalize: [] });
-      render2();
-    }
-    function autofillFields() {
-      reparse();
-      const keys = new Set(b.fields.map((f) => f.key));
-      let added = 0;
-      const sources = parsed.mode === 'table' && parsed.headers ? parsed.headers.map((h) => ({ label: h, source: { type: 'header', name: h } }))
-        : parsed.mode === 'keyvalue' ? parsed.kv.map((x) => ({ label: x.key, source: { type: 'key', name: x.key } }))
-        : [];
-      if (!sources.length) { toast('自動作成できる項目が見つかりません。データの形を確認してください。', 'warn'); return; }
-      for (const s of sources) {
-        if (b.fields.some((f) => f.label === s.label)) continue;
-        b.fields.push({ key: makeKey(s.label, keys), label: s.label, source: s.source, normalize: [] });
-        keys.add(b.fields[b.fields.length - 1].key);
-        added++;
-      }
-      toast(`${added}件の項目を作成しました`, 'success');
-      render2();
-    }
-    renderFields();
+  // ---- 項目 ----
+  function renderFields() {
+    clear(fieldsHost); previewEls.clear();
+    if (!b.fields.length) { fieldsHost.appendChild(el('div', { class: 'field-empty', text: 'まだ項目がありません。「項目を追加」してから、表のセルを選びます。' })); return; }
+    for (const f of b.fields) {
+      const isFixed = f.source?.type === 'fixed';
+      const cellBtnLabel = f.source?.type === 'cell' ? `📍 ${cellRef(f.source.r, f.source.c)}` : '📍 セルを選択';
+      const valueEl = el('div', { class: 'preview-value' });
+      const badgeEl = el('span', {});
+      previewEls.set(f.key, { valueEl, badgeEl, field: f });
 
-    // ③ 保存
-    body.appendChild(el('div', { class: 'flow-actions' }, [
-      el('div', { class: 'muted small', text: `${b.fields.length}項目` }),
-      el('div', { class: 'spacer' }),
-      el('button', { class: 'btn btn--ghost', onClick: () => app.closeBindingEditor() }, 'キャンセル'),
-      el('button', { class: 'btn btn--primary btn--lg', onClick: save }, [icon('save'), 'プリセットとして保存']),
-    ]));
+      const srcControl = isFixed
+        ? textInput({ value: f.source.value || '', placeholder: '固定で入れる値', sm: true, oninput: (v) => { f.source.value = v; updatePreviews(); } })
+        : el('button', { class: 'btn btn--sm ' + (pickFieldKey === f.key ? 'btn--bind' : (f.source?.type === 'cell' ? 'btn--secondary' : 'btn--ghost')), onClick: () => { setPick(pickFieldKey === f.key ? null : f.key); renderGrid(); renderFields(); } }, cellBtnLabel);
+
+      const row = el('div', { class: 'field-card' }, [
+        el('div', { class: 'row gap-2 row--wrap', style: { alignItems: 'flex-end' } }, [
+          el('div', { class: 'field grow', style: { minWidth: '120px' } }, [el('label', { text: '項目名' }), textInput({ value: f.label, placeholder: '例: 品番', sm: true, oninput: (v) => { f.label = v; } })]),
+          el('div', { class: 'field' }, [el('label', { text: '取得方法' }), segmented({ value: isFixed ? 'fixed' : 'cell', options: [{ value: 'cell', label: 'セル' }, { value: 'fixed', label: '固定' }], onchange: (v) => { f.source = v === 'fixed' ? { type: 'fixed', value: '' } : null; if (v === 'cell') setPick(f.key); renderGrid(); renderFields(); } })]),
+          el('div', { class: 'field' }, [el('label', { text: isFixed ? '値' : '対応セル' }), srcControl]),
+          el('button', { class: 'icon-btn icon-btn--danger', title: '削除', onClick: () => { b.fields = b.fields.filter((x) => x !== f); if (pickFieldKey === f.key) setPick(null); renderGrid(); renderFields(); } }, [icon('trash', 18)]),
+        ]),
+        el('div', { class: 'row gap-2 mt-2', style: { alignItems: 'center' } }, [el('span', { class: 'xs muted nowrap', text: '結果' }), valueEl, badgeEl]),
+        normalizeEditor(f, updatePreviews),
+      ]);
+      fieldsHost.appendChild(row);
+    }
+    updatePreviews();
+  }
+  function updatePreviews() {
+    const { values, meta } = resolveFields(b, parsed, 0);
+    for (const [key, refs] of previewEls) {
+      const v = values[key]; const m = meta[key] || {};
+      refs.valueEl.textContent = v === '' ? '(空)' : v;
+      refs.valueEl.classList.toggle('muted', v === '');
+      clear(refs.badgeEl);
+      if (refs.field.source && refs.field.source.type !== 'fixed' && !m.matched) refs.badgeEl.appendChild(el('span', { class: 'badge badge--warn', text: '未取得' }));
+      else if (v !== '') refs.badgeEl.appendChild(el('span', { class: 'badge badge--ok', text: 'OK' }));
+    }
+  }
+  function addField() {
+    const keys = new Set(b.fields.map((f) => f.key));
+    const label = `項目${b.fields.length + 1}`;
+    const key = makeKey(label, keys);
+    b.fields.push({ key, label, source: null, normalize: [] });
+    renderFields(); setPick(key); renderGrid();
+  }
+  function autofillFields() {
+    reparse();
+    const keys = new Set(b.fields.map((f) => f.key));
+    const sources = parsed.mode === 'table' && parsed.headers ? parsed.headers.map((h) => ({ label: h, source: { type: 'header', name: h } }))
+      : parsed.mode === 'keyvalue' ? parsed.kv.map((x) => ({ label: x.key, source: { type: 'key', name: x.key } })) : [];
+    if (!sources.length) { toast('自動作成できる項目が見つかりません。セルを手動で選択してください。', 'warn'); return; }
+    let added = 0;
+    for (const s of sources) { if (b.fields.some((f) => f.label === s.label)) continue; const k = makeKey(s.label, keys); b.fields.push({ key: k, label: s.label, source: s.source, normalize: [] }); keys.add(k); added++; }
+    toast(`${added}件の項目を作成しました`, 'success');
+    renderFields(); renderGrid();
   }
 
   function save() {
@@ -248,38 +265,21 @@ function renderEditor(root, app) {
     if (!b.fields.length) { toast('項目を1つ以上作成してください', 'warn'); return; }
     if (Store.bindings.nameExists(b.name.trim(), b.id)) { toast('同じ名前のルールが既にあります', 'warn'); return; }
     b.name = b.name.trim();
-    const saved = Store.bindings.upsert(b);
-    app.editingBinding = saved;
+    app.editingBinding = Store.bindings.upsert(b);
     toast('保存しました', 'success');
     app.render();
   }
 
-  render();
+  // Escでセル選択キャンセル
+  const onKey = (e) => { if (e.key === 'Escape' && pickFieldKey) { setPick(null); renderGrid(); renderFields(); } };
+  document.addEventListener('keydown', onKey);
+  // 画面離脱時の後始末はAppの再描画でDOMごと消えるため割愛(リスナはDOM参照を保持しない)
+
+  renderGrid();
+  renderFields();
 }
 
-// ---- 小物 ----
-function labelOfMode(m) { return m === 'table' ? '表' : m === 'keyvalue' ? '項目:値' : 'セル'; }
-
-function gridPreview(parsed) {
-  const wrap = el('div', { class: 'tablewrap' });
-  const table = el('table', { class: 'grid' });
-  const maxRows = Math.min(parsed.grid.length, 12);
-  const tbody = el('tbody');
-  for (let r = 0; r < maxRows; r++) {
-    const tr = el('tr', parsed.mode === 'table' && r === 0 ? { style: { fontWeight: '700' } } : {});
-    tr.appendChild(el('td', { class: 'rownum', text: String(r + 1) }));
-    for (let cIdx = 0; cIdx < parsed.cols; cIdx++) {
-      tr.appendChild(el('td', { text: parsed.grid[r][cIdx] ?? '' }));
-    }
-    tbody.appendChild(tr);
-  }
-  table.appendChild(tbody);
-  wrap.appendChild(table);
-  if (parsed.grid.length > maxRows) wrap.appendChild(el('div', { class: 'xs muted', style: { padding: '6px 9px' }, text: `…ほか ${parsed.grid.length - maxRows} 行` }));
-  return wrap;
-}
-
-/** 正規化操作の編集(段階的開示: 折りたたみ) */
+/** 正規化操作の編集(段階的開示) */
 function normalizeEditor(field, onChange) {
   const list = el('div', { class: 'col gap-2' });
   function renderList() {
@@ -287,30 +287,23 @@ function normalizeEditor(field, onChange) {
     field.normalize = field.normalize || [];
     field.normalize.forEach((step, idx) => {
       const def = NORMALIZE_OPS.find((o) => o.op === step.op);
-      const argInputs = [];
-      if (def?.args?.includes('find')) argInputs.push(textInput({ value: step.find || '', placeholder: '検索', sm: true, oninput: (v) => { step.find = v; onChange(); } }));
-      if (def?.args?.includes('repl')) argInputs.push(textInput({ value: step.repl || '', placeholder: '置換後', sm: true, oninput: (v) => { step.repl = v; onChange(); } }));
-      if (def?.args?.includes('regex')) {
-        const cb = el('label', { class: 'row gap-2 small' }, [el('input', { type: 'checkbox', ...(step.regex ? { checked: true } : {}), onchange: (e) => { step.regex = e.target.checked; onChange(); } }), '正規表現']);
-        argInputs.push(cb);
-      }
-      if (def?.args?.includes('text')) argInputs.push(textInput({ value: step.text || '', placeholder: '文字', sm: true, oninput: (v) => { step.text = v; onChange(); } }));
-      if (def?.args?.includes('start')) argInputs.push(textInput({ value: step.start ?? '', placeholder: '開始', sm: true, oninput: (v) => { step.start = v === '' ? '' : parseInt(v, 10) || 0; onChange(); } }));
-      if (def?.args?.includes('len')) argInputs.push(textInput({ value: step.len ?? '', placeholder: '長さ', sm: true, oninput: (v) => { step.len = v; onChange(); } }));
-
+      const args = [];
+      if (def?.args?.includes('find')) args.push(textInput({ value: step.find || '', placeholder: '検索', sm: true, oninput: (v) => { step.find = v; onChange(); } }));
+      if (def?.args?.includes('repl')) args.push(textInput({ value: step.repl || '', placeholder: '置換後', sm: true, oninput: (v) => { step.repl = v; onChange(); } }));
+      if (def?.args?.includes('regex')) args.push(el('label', { class: 'row gap-2 small' }, [el('input', { type: 'checkbox', ...(step.regex ? { checked: true } : {}), onchange: (e) => { step.regex = e.target.checked; onChange(); } }), '正規表現']));
+      if (def?.args?.includes('text')) args.push(textInput({ value: step.text || '', placeholder: '文字', sm: true, oninput: (v) => { step.text = v; onChange(); } }));
+      if (def?.args?.includes('start')) args.push(textInput({ value: step.start ?? '', placeholder: '開始', sm: true, oninput: (v) => { step.start = v === '' ? '' : (parseInt(v, 10) || 0); onChange(); } }));
+      if (def?.args?.includes('len')) args.push(textInput({ value: step.len ?? '', placeholder: '長さ', sm: true, oninput: (v) => { step.len = v; onChange(); } }));
       list.appendChild(el('div', { class: 'row gap-2 row--wrap', style: { alignItems: 'center' } }, [
         el('span', { class: 'badge badge--muted', text: String(idx + 1) }),
-        selectInput({ value: step.op, sm: true, options: NORMALIZE_OPS.map((o) => ({ value: o.op, label: o.label })), onchange: (v) => { step.op = v; onChange(); } }),
-        ...argInputs,
-        el('button', { class: 'icon-btn icon-btn--danger', title: '削除', onClick: () => { field.normalize.splice(idx, 1); onChange(); } }, [icon('trash', 16)]),
+        selectInput({ value: step.op, sm: true, options: NORMALIZE_OPS.map((o) => ({ value: o.op, label: o.label })), onchange: (v) => { step.op = v; renderList(); onChange(); } }),
+        ...args,
+        el('button', { class: 'icon-btn icon-btn--danger', title: '削除', onClick: () => { field.normalize.splice(idx, 1); renderList(); onChange(); } }, [icon('trash', 16)]),
       ]));
     });
-    list.appendChild(el('button', {
-      class: 'btn btn--ghost btn--sm', style: { alignSelf: 'flex-start' },
-      onClick: () => { field.normalize.push({ op: 'trim' }); onChange(); },
-    }, [icon('plus', 16), '正規化ステップを追加']));
+    list.appendChild(el('button', { class: 'btn btn--ghost btn--sm', style: { alignSelf: 'flex-start' }, onClick: () => { field.normalize.push({ op: 'trim' }); renderList(); onChange(); } }, [icon('plus', 16), '正規化を追加']));
   }
   renderList();
   const count = (field.normalize || []).length;
-  return el('div', { class: 'mt-2' }, [expander(`正規化(整える)${count ? ` ・${count}ステップ` : ''}`, list, false)]);
+  return el('div', { class: 'mt-2' }, [expander(`正規化(整える)${count ? ` ・${count}` : ''}`, list, false)]);
 }
